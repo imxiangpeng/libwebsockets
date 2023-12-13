@@ -144,6 +144,14 @@ if ((LWS_ROLE_H1 OR LWS_ROLE_H2))
 			target_include_directories(test-sshd PRIVATE "${PROJECT_SOURCE_DIR}/plugins/ssh-base/include")
 			target_compile_definitions(test-sshd PRIVATE LWS_BUILDING_SHARED)
 			endif()
+			create_test_app(hrouter "hrouter_server.c"
+				""
+				""
+				""
+				""
+				"")
+			target_compile_definitions(hrouter PRIVATE LWS_BUILDING_SHARED)
+
 
 		endif()
 
