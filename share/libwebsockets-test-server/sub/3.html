@@ -1,0 +1,56 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebSocket Example</title>
+</head>
+<body>
+    <button id="sendButton">Send JSON Data</button>
+
+    <script>
+        // 创建一个 WebSocket 连接
+        const socket = new WebSocket('ws://localhost:7681', 'api');
+
+        // 当连接建立时触发的回调函数
+        socket.addEventListener('open', function (event) {
+            console.log('Connection established');
+        });
+
+        // 当从服务器接收到消息时触发的回调函数
+        socket.addEventListener('message', function (event) {
+
+            var data = JSON.parse(event.data); // 假设服务器发送的是 JSON 格式的数据
+
+            // 在控制台上打印接收到的数据
+            console.log('Received message:' + JSON.stringify(data));
+        });
+
+        // 当发生错误时触发的回调函数
+        socket.addEventListener('error', function (event) {
+            console.error('Error occurred:', event);
+        });
+
+        // 当连接关闭时触发的回调函数
+        socket.addEventListener('close', function (event) {
+            console.log('Connection closed');
+        });
+
+        // 当点击 "Send JSON Data" 按钮时触发的事件处理程序
+        document.getElementById('sendButton').addEventListener('click', function () {
+            // 创建一个要发送的 JSON 对象
+            var data = {
+                key1: 'value1',
+                key2: 'value2'
+            };
+
+            // 将 JSON 对象转换为字符串，并发送给服务器
+            str = JSON.stringify(data);
+            console.log("send:" + str)
+            socket.send(str);
+        });
+    </script>
+</body>
+</html>
+
