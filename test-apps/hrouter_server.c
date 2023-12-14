@@ -32,7 +32,7 @@ int debug_level = LLL_USER | 7;
 volatile int force_exit = 0, dynamic_vhost_enable = 0;
 struct lws_vhost *dynamic_vhost;
 struct lws_context *context;
-struct lws_plat_file_ops fops_plat;
+//struct lws_plat_file_ops fops_plat;
 static int test_options;
 
 /* http server gets files from this path */
@@ -42,8 +42,14 @@ char *resource_path = LOCAL_RESOURCE_PATH;
 char crl_path[1024] = "";
 #endif
 
-
-struct pss {
+enum lws_hrouter_request_method {
+    HROUTER_HTTP_UNKNOWN = 0,
+    HROUTER_HTTP_GET,
+    HROUTER_HTTP_POST
+};
+struct lws_hrouter {
+    enum lws_hrouter_request_method method;
+    unsigned long long content_length;
     struct lws_spa *spa;
 };
 
@@ -66,14 +72,20 @@ static int
 lws_callback_http(struct lws *wsi, enum lws_callback_reasons reason, void *user,
                   void *in, size_t len) {
     const unsigned char *c;
-
+    
+    char content_length_str[32] = { 0 };
     char buf[1024];
     int n = 0, hlen;
 
-    struct pss *pss = (struct pss *)user;
-    printf("%s(%d): .....................reason:%d..........\n", __FUNCTION__, __LINE__, reason);
+    struct lws_hrouter *hrouter = (struct lws_hrouter *)user;
+    printf("%s(%d): ...........wsi:%p, hrouter:%p..........reason:%d..........\n", __FUNCTION__, __LINE__, (void*)wsi, (void*)hrouter, reason);
     lwsl_err("%s: reason: %d\n", __func__, reason);
     switch (reason) {
+    case LWS_CALLBACK_FILTER_NETWORK_CONNECTION:
+        break;
+    case LWS_CALLBACK_FILTER_HTTP_CONNECTION:
+        break;
+
     case LWS_CALLBACK_HTTP:
 
         /* non-mount-handled accesses will turn up here */
@@ -94,11 +106,13 @@ lws_callback_http(struct lws *wsi, enum lws_callback_reasons reason, void *user,
                 continue;
             }
 
-            if (lws_hdr_copy(wsi, buf, sizeof buf,(enum lws_token_indexes)n) < 0) fprintf(stderr, "    %s (too big)\n", (char *)c);
+            if (lws_hdr_copy(wsi, buf, sizeof buf,(enum lws_token_indexes)n) < 0) 
+                fprintf(stderr, "    %s (too big)\n", (char *)c);
             else {
                 buf[sizeof(buf) - 1] = '\0';
-
+                printf("   1 %s = %s\n", (char *)c, buf);
                 fprintf(stderr, "    %s = %s\n", (char *)c, buf);
+                lwsl_debug("%s: %s --> buf:%s\n", __func__, c, buf);
             }
             n++;
         } while (c);
@@ -112,13 +126,50 @@ lws_callback_http(struct lws *wsi, enum lws_callback_reasons reason, void *user,
             lwsl_debug("%s: buf:%s\n", __func__, buf);
         }
 
+        //if (HROUTER_HTTP_UNKNOWN == hrouter->method) {
 
-#if 0
-        if (lws_return_http_status(wsi, HTTP_STATUS_OK/*HTTP_STATUS_NOT_FOUND*/, NULL)){
+            char *uri_ptr = NULL;
+            int uri_len = 0;
+            int meth = lws_http_get_uri_and_method(wsi, &uri_ptr, &uri_len);
+            if (meth != LWSHUMETH_GET && meth != LWSHUMETH_POST) {
+                lwsl_debug("%s: not support :%d ....\n", __func__, meth);
+                return -1;
+            }
+
+            hrouter->method = meth;
+
+            lwsl_debug("%s: header method:%d  uri_ptr:%p, len:%d ..in:%p, len:%ld.\n", __func__, meth, (void*)uri_ptr, uri_len, (void*)in, len);
+            //}
+
+#if 1
+            if (lws_hdr_total_length(wsi, WSI_TOKEN_HTTP_CONTENT_LENGTH) &&
+                lws_hdr_copy(wsi, content_length_str,
+                             sizeof(content_length_str) - 1,
+                             WSI_TOKEN_HTTP_CONTENT_LENGTH) > 0) {
+                
+                hrouter->content_length = (unsigned long long)atoll(content_length_str);
+                
+                lwsl_debug("%s: content length:%lld\n", __func__, hrouter->content_length);
+            }
+#endif
+
+        // if it's http get, it means that we can not find the page, return it ...
+#if 1
+        if (lws_return_http_status(wsi, HTTP_STATUS_NOT_FOUND, NULL)){
             lwsl_debug("%s: return http status , close ....\n", __func__);
             return -1;
         }
-
+#if 0
+        /*
+	 * Our response is to redirect to a static page.  We could
+	 * have generated a dynamic html page here instead.
+         */
+        
+        if (lws_http_redirect(wsi, HTTP_STATUS_SEE_OTHER/*HTTP_STATUS_MOVED_PERMANENTLY*/,
+                              (unsigned char *)"netlock.html",
+                              16, &p, end) < 0)
+            return -1;
+#endif
         if (lws_http_transaction_completed(wsi)) {
             lwsl_debug("%s: return http status , transaction completed  ....\n", __func__);
             return -1;
@@ -129,33 +180,33 @@ lws_callback_http(struct lws *wsi, enum lws_callback_reasons reason, void *user,
         {
             /* create the POST argument parser if not already existing */
 
-            if (!pss->spa) {
-                pss->spa = lws_spa_create(wsi, param_names,
+            if (!hrouter->spa) {
+                hrouter->spa = lws_spa_create(wsi, param_names,
                                           LWS_ARRAY_SIZE(param_names), 1024,
                                           NULL, NULL); /* no file upload */
-                if (!pss->spa) return -1;
+                if (!hrouter->spa) return -1;
             }
 
             /* let it parse the POST data */
 
-            if (lws_spa_process(pss->spa, in, (int)len)) return -1;
+            if (lws_spa_process(hrouter->spa, in, (int)len)) return -1;
             break;
 
         }
     case LWS_CALLBACK_HTTP_BODY_COMPLETION:
 
-        lws_spa_finalize(pss->spa);
+        lws_spa_finalize(hrouter->spa);
 
 
 
         /* we just dump the decoded things to the log */
 
-        if (pss->spa) for (n = 0; n < (int)LWS_ARRAY_SIZE(param_names); n++) {
-                if (!lws_spa_get_string(pss->spa, n)) lwsl_user("%s: undefined\n", param_names[n]);
+        if (hrouter->spa) for (n = 0; n < (int)LWS_ARRAY_SIZE(param_names); n++) {
+                if (!lws_spa_get_string(hrouter->spa, n)) lwsl_user("%s: undefined\n", param_names[n]);
                 else lwsl_user("%s: (len %d) '%s'\n",
                                param_names[n],
-                               lws_spa_get_length(pss->spa, n),
-                               lws_spa_get_string(pss->spa, n));
+                               lws_spa_get_length(hrouter->spa, n),
+                               lws_spa_get_string(hrouter->spa, n));
             }
 
         /*
@@ -180,8 +231,8 @@ lws_callback_http(struct lws *wsi, enum lws_callback_reasons reason, void *user,
 
         break;
     case LWS_CALLBACK_CLOSED_CLIENT_HTTP:
-        if (pss->spa && lws_spa_destroy(pss->spa)) {
-            pss->spa = NULL;
+        if (hrouter->spa && lws_spa_destroy(hrouter->spa)) {
+            hrouter->spa = NULL;
             return -1;
         }
         break;
@@ -217,12 +268,12 @@ lws_callback_http_api(struct lws *wsi, enum lws_callback_reasons reason, void *u
 
 static struct lws_protocols protocols[] = {
     /* first protocol must always be HTTP handler */
-    { "http-only", lws_callback_http, sizeof(struct pss), 0, 0, NULL, 0 },
-    { "api", lws_callback_http_api, sizeof(struct pss), 0, 0, NULL, 0 },
+    { "http", lws_callback_http, sizeof(struct lws_hrouter), 0, 0, NULL, 0 },
+    { "api", lws_callback_http_api, sizeof(struct lws_hrouter), 0, 0, NULL, 0 },
     LWS_PROTOCOL_LIST_TERM
 };
 
-
+#if 0
 /* this shows how to override the lws file operations.	You don't need
  * to do any of this unless you have a reason (eg, want to serve
  * compressed files without decompressing the whole archive)
@@ -244,7 +295,7 @@ test_server_fops_open(const struct lws_plat_file_ops *this_fops,
 
     return fop_fd;
 }
-
+#endif
 void sighandler(int sig) {
     force_exit = 1;
     lws_cancel_service(context);
@@ -528,9 +579,9 @@ int main(int argc, char **argv) {
      * compressed files without decompressing the whole archive)
      */
     /* stash original platform fops */
-    fops_plat = *(lws_get_fops(context));
+    //fops_plat = *(lws_get_fops(context));
     /* override the active fops */
-    lws_get_fops(context)->open = test_server_fops_open;
+    //lws_get_fops(context)->open = test_server_fops_open;
 
     n = 0;
     while (n >= 0 && !force_exit) {
