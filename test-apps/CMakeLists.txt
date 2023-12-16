@@ -153,7 +153,8 @@ if ((LWS_ROLE_H1 OR LWS_ROLE_H2))
 				#INCLUDE_DIRECTORIES(./include)target_include_directories(hrouter ".")
 			INCLUDE_DIRECTORIES(./)
 			target_link_libraries(hrouter "cjson")
-			target_compile_definitions(hrouter PRIVATE LWS_BUILDING_SHARED)
+			#target_compile_definitions(hrouter PRIVATE LWS_BUILDING_SHARED)
+			target_compile_definitions(hrouter PRIVATE LWS_BUILDING_STATIC)
 
 
 		endif()
