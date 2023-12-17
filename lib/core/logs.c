@@ -28,6 +28,9 @@
 #include <sys/types.h>
 #endif
 
+#include <sys/syscall.h>
+#include <unistd.h>
+
 #if defined(LWS_PLAT_OPTEE)
 void lwsl_emit_optee(int level, const char *line);
 #endif
@@ -405,6 +408,10 @@ __lws_logv(lws_log_cx_t *cx, lws_log_prepend_cx_t prep, void *obj,
 		lwsl_timestamp(filter, buf, sizeof(buf));
 		p += strlen(buf);
 	}
+
+    // mxp, add pid & tid
+	p += lws_snprintf(p, (size_t) (p - buf), "%d %ld ", getpid(),  syscall(SYS_gettid));
+
 
 	/*
 	 * prepend parent log ctx content first

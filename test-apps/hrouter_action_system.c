@@ -32,6 +32,8 @@ static int _system_version_action_handler(struct hrouter_request *request) {
 
   free(str);
 
+  cJSON_Delete(root);
+
   result = cJSON_CreateObject();
   cJSON_AddStringToObject(result, "software", "1.1.0");
   cJSON_AddStringToObject(result, "hardware", "HW 1.0");
@@ -40,7 +42,7 @@ static int _system_version_action_handler(struct hrouter_request *request) {
   // will be released later
   request->response = cJSON_Print(result);
 
-  cJSON_Delete(root);
+  cJSON_Delete(result);
 
   return 0;
 }
@@ -50,7 +52,10 @@ static struct _action_handler {
   int (*handler)(struct hrouter_request *request);
   int need_auth;
 } _action_handler_tbl[] = {
-    {"/system/version", _system_version_action_handler, 0}, {NULL, NULL, 0}
+    {"/system/version", _system_version_action_handler, 0}, {NULL, NULL, 0},
+    {"/system/memory", _system_version_action_handler, 0}, {NULL, NULL, 0},
+    {"/system/disk", _system_version_action_handler, 0}, {NULL, NULL, 0},
+    {NULL, NULL, 0}
 
 };
 
