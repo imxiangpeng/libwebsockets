@@ -10,7 +10,7 @@ static int _system_version_action_handler(struct hrouter_request *request) {
   if (!request || !request->content)
     return -1;
 
-  root = cJSON_Parse(request->content);
+  root = cJSON_ParseWithLength(request->content, request->content_length);
   if (!root) {
     printf("invalid data ....\n");
     return -1;
@@ -26,7 +26,7 @@ static int _system_version_action_handler(struct hrouter_request *request) {
 
 #endif
 
-  char *str = cJSON_Print(root);
+  char *str = cJSON_PrintUnformatted(root);
 
   printf("got :%s\n", str);
 
@@ -39,9 +39,25 @@ static int _system_version_action_handler(struct hrouter_request *request) {
   cJSON_AddStringToObject(result, "hardware", "HW 1.0");
   cJSON_AddStringToObject(result, "os", "hsan 3.3.16");
 
-  // will be released later
-  request->response = cJSON_Print(result);
-
+  if (request->response) {
+    char *ptr = request->response + request->response_offset;
+    printf("request:%p, response:%p, ptr:%p, size:%ld, offset:%ld\n", request,
+           request->response, ptr, request->response_size,
+           request->response_offset);
+    int ret = cJSON_PrintPreallocated(
+        result, ptr, (int)(request->response_size - request->response_offset),
+        0);
+    if (ret != 1) {
+      // memory maybe small
+      // reallocate
+      printf("%s(%d): failed maybe memory not enough.....\n", __FUNCTION__,
+             __LINE__);
+    }
+    request->response_offset += strlen(ptr) + 1; // end with'\0'
+  } else {
+    // will be released later
+    // request->response = cJSON_PrintUnformatted(result);
+  }
   cJSON_Delete(result);
 
   return 0;
@@ -52,9 +68,12 @@ static struct _action_handler {
   int (*handler)(struct hrouter_request *request);
   int need_auth;
 } _action_handler_tbl[] = {
-    {"/system/version", _system_version_action_handler, 0}, {NULL, NULL, 0},
-    {"/system/memory", _system_version_action_handler, 0}, {NULL, NULL, 0},
-    {"/system/disk", _system_version_action_handler, 0}, {NULL, NULL, 0},
+    {"/system/version", _system_version_action_handler, 0},
+    {NULL, NULL, 0},
+    {"/system/memory", _system_version_action_handler, 0},
+    {NULL, NULL, 0},
+    {"/system/disk", _system_version_action_handler, 0},
+    {NULL, NULL, 0},
     {NULL, NULL, 0}
 
 };

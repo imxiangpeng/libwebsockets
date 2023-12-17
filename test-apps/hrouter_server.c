@@ -24,6 +24,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+#include <string.h>
 #include <unistd.h>
 
 #include <sys/queue.h>
@@ -243,7 +244,7 @@ static int lws_callback_http(struct lws *wsi, enum lws_callback_reasons reason,
     lwsl_debug("%s: PPPOEuser .....:%s\n", __func__, value);
 
     int meth = lws_http_get_uri_and_method(wsi, &uri_ptr, &uri_len);
-    if (meth != LWSHUMETH_GET && meth != LWSHUMETH_POST) {
+    if (/*meth != LWSHUMETH_GET &&*/ meth != LWSHUMETH_POST) {
       lwsl_debug("%s: not support :%d ....\n", __func__, meth);
       return -1;
     }
@@ -291,16 +292,19 @@ static int lws_callback_http(struct lws *wsi, enum lws_callback_reasons reason,
   case LWS_CALLBACK_HTTP_BODY: {
 
     if (!request->content) {
-      request->content = (char *)malloc(request->content_length);
-      request->position = 0;
+      // it maybe verify big data, so we using self buffer, or we using
+      // preallocate large buffer
+      request->content = (char *)calloc(1, request->content_length);
+      request->content_offset = 0;
     }
 
-    assert(request->position + len <= request->content_length);
+    assert(request->content_offset + len <= request->content_length);
 
-    memcpy((void *)(request->content + request->position), (void *)in, len);
-    request->position += len;
+    memcpy((void *)(request->content + request->content_offset), (void *)in,
+           len);
+    request->content_offset += len;
 
-    printf("position:%ld vs %lld\n", request->position,
+    printf("position:%ld vs %lld\n", request->content_offset,
            request->content_length);
 
     return 0;
@@ -314,9 +318,19 @@ static int lws_callback_http(struct lws *wsi, enum lws_callback_reasons reason,
     const char *content_type = "application/json";
     printf("full post data:%s\n", request->content);
     unsigned char *start, *p, *end;
-    p = (unsigned char *)request->result + LWS_PRE;
+    p = (unsigned char *)request->response_hdr + LWS_PRE;
     start = p;
-    end = p + sizeof(request->result) - LWS_PRE - 1;
+    end = p + sizeof(request->response_hdr) - LWS_PRE - 1;
+
+    if (request->response) {
+      free(request->response);
+      request->response_offset = 0;
+    }
+
+    request->response =
+        (char *)calloc(1, HROUTER_SERVER_PRE_DEFAULT_RESPONSE_SIZE);
+    request->response_size = HROUTER_SERVER_PRE_DEFAULT_RESPONSE_SIZE;
+    request->response_offset = 0;
     /*int ret =*/_hrouter_server_action_process(request);
 
     ret = lws_add_http_header_status(wsi, HTTP_STATUS_OK, &p, end);
@@ -351,10 +365,12 @@ static int lws_callback_http(struct lws *wsi, enum lws_callback_reasons reason,
     if (request->response) {
       free(request->response);
       request->response = NULL;
+      request->response_offset = 0;
     }
     if (request->content) {
       free(request->content);
       request->content = NULL;
+      request->content_offset = 0;
     }
     // request/user_space will auto be freed
     // memset((void*)request, 0, sizeof(struct hrouter_request));
@@ -386,44 +402,6 @@ static int lws_callback_http(struct lws *wsi, enum lws_callback_reasons reason,
 
     break;
 
-  case LWS_CALLBACK_WSI_CREATE:
-
-    printf("wsi create ************************* ..request:%p...\n", request);
-    printf("wsi create ************************* ..request:%p...response :%p\n",
-           request, request != NULL ? request->response : 0);
-
-    // lws_set_wsi_user(wsi, malloc(sizeof(struct hrouter_request)));
-
-    break;
-  // case LWS_CALLBACK_HTTP_BIND_PROTOCOL:
-
-  // printf("bind protocol ..request:%p...response :%p\n", request, request !=
-  // NULL ? request->response : 0); break; case LWS_CALLBACK_HTTP_DROP_PROTOCOL:
-  case LWS_CALLBACK_WSI_DESTROY: // user_space have been freed
-                                 // case LWS_CALLBACK_HTTP_DROP_PROTOCOL:
-
-    printf("wsi destroy ..request:%p...response :%p\n", request,
-           request != NULL ? request->response : 0);
-    if (!request) {
-      break;
-    }
-
-    printf("drop protocol wsi:%p, request:%p, response:%p\n", wsi, request,
-           request->response);
-    if (request->response) {
-      free(request->response);
-      request->response = NULL;
-    }
-    if (request->content) {
-      free(request->content);
-      request->content = NULL;
-    }
-
-    memset((void *)request, 0, sizeof(struct hrouter_request));
-
-    // free(request);
-    // lws_set_wsi_user(wsi, NULL);
-    break;
   default:
     break;
   }
@@ -434,15 +412,66 @@ static int lws_callback_http(struct lws *wsi, enum lws_callback_reasons reason,
 static int lws_callback_http_api(struct lws *wsi,
                                  enum lws_callback_reasons reason, void *user,
                                  void *in, size_t len) {
-
+  struct hrouter_request *request = (struct hrouter_request *)user;
   switch (reason) {
   case LWS_CALLBACK_ESTABLISHED: {
     lwsl_debug("New connection established\n");
     break;
   }
   case LWS_CALLBACK_RECEIVE: {
-    lwsl_debug("recevied:%s, len:%ld\n\n", (unsigned char *)in, len);
-    lws_write(wsi, (unsigned char *)in, len, LWS_WRITE_TEXT);
+    lwsl_debug("recevied:%s, len:%ld, content:%p\n\n", (unsigned char *)in, len,
+               request->content);
+    request->is_ws = 1;
+    if (!request->content) {
+      request->content_length = len + 1;
+      request->content = (char *)calloc(1, request->content_length);
+      request->content_offset = 0;
+    }
+
+    memcpy((void *)(request->content + request->content_offset), (void *)in,
+           len);
+    request->content_offset += len;
+
+    if (request->response) {
+      free(request->response);
+      request->response_offset = 0;
+      request->response_size = 0;
+    }
+
+    request->response =
+        (char *)calloc(1, HROUTER_SERVER_PRE_DEFAULT_RESPONSE_SIZE);
+    request->response_size = HROUTER_SERVER_PRE_DEFAULT_RESPONSE_SIZE;
+    request->response_offset = 0;
+
+    // reserve LSW_PRE for ws
+    request->response_offset = LWS_PRE;
+
+    printf("mxp request:%p, response:%p, ptr:%p, size:%ld, offset:%ld\n",
+           request, request->response, request->response + LWS_PRE,
+           request->response_size, request->response_offset);
+    _hrouter_server_action_process(request);
+
+    // lws_write(wsi, (unsigned char *)in, len, LWS_WRITE_TEXT);
+    // size_t size = strlen(request->response + LSW_PRE);
+    printf("write len:%ld, %s\n", strlen(request->response), request->response);
+
+    lws_write(wsi, (unsigned char *)request->response + LWS_PRE,
+              request->response_offset - LWS_PRE - 1 /*remove null char*/,
+              LWS_WRITE_TEXT);
+
+    if (request->content) {
+      free(request->content);
+      request->content = NULL;
+    }
+
+      // do not release here for same connection ...
+    if (request->response) {
+      free(request->response);
+      request->response = NULL;
+      request->response_size = 0;
+      request->response_offset = 0;
+    }
+
     break;
   }
   default:
@@ -698,7 +727,8 @@ int main(int argc, char **argv) {
       return -1;
     }
     if (!key_path[0])
-      sprintf(key_path, "%s/libwebsockets-test-server.key.pem", resource_path);
+      info.server_string = "hrouter/1.0";
+    sprintf(key_path, "%s/libwebsockets-test-server.key.pem", resource_path);
 #if defined(LWS_WITH_TLS)
     info.ssl_cert_filepath = cert_path;
     info.ssl_private_key_filepath = key_path;
@@ -710,7 +740,8 @@ int main(int argc, char **argv) {
   info.gid = gid;
   info.uid = uid;
 
-  //info.count_threads = 4;
+  info.server_string = "hrouter/1.0";
+  // info.count_threads = 4;
 
   info.options = opts | LWS_SERVER_OPTION_VALIDATE_UTF8 |
                  LWS_SERVER_OPTION_EXPLICIT_VHOSTS;
