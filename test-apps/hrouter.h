@@ -1,27 +1,26 @@
 #ifndef _HROUTER_
 #define _HROUTER_
 
-//struct cJSON;
+#include "libwebsockets.h"
 
 struct hrouter_request {
 
     //enum lws_hrouter_request_method
     int method;
+    char uri[32];
+    int is_ws;
     unsigned long long content_length;
     char* content;
     size_t position;
-    //cJSON* root;
-    //cJSON* ele;
+    char* response;
+    char result[LWS_PRE + LWS_RECOMMENDED_MIN_HEADER_SPACE];
 };
-typedef int (*hrouter_action_handler)(struct hrouter_request* request);
-/*struct hrouter_action {
-  const char* name;
-  hrouter_action_handler action;
-};*/
+typedef int (*hrouter_request_action_handler)(const char* action, struct hrouter_request* request);
 
 
-// please using const action, do not release it
-int hrouter_server_register_action(const char* action, hrouter_action_handler handler, int need_auth);
+// please using const action,
+// action will be called when prefix match
+int hrouter_server_register_action(const char* action, hrouter_request_action_handler handler, int need_auth);
 
 
 #endif //_HROUTER_
