@@ -328,6 +328,9 @@
                                         (int)strlen(content_type), &p, end);
       (void)ret;
       size_t n = 0;
+
+
+      printf("wsi:%p, request:%p, response:%p\n", wsi, request, request->response);
       if (request->response) {
         n = strlen(request->response);
       }
@@ -342,6 +345,16 @@
       lws_write(wsi, (unsigned char *)request->response, (unsigned int)n,
                 LWS_WRITE_HTTP_FINAL);
 
+      if (request->response) {
+          free(request->response);
+          request->response = NULL;
+      }
+      if (request->content) {
+          free(request->content);
+          request->content = NULL;
+      }
+      // request/user_space will auto be freed
+      //memset((void*)request, 0, sizeof(struct hrouter_request));
   #if 0
       if (lws_return_http_status(wsi, HTTP_STATUS_OK, hrouter->response))
         return -1;
@@ -369,12 +382,46 @@
     case LWS_CALLBACK_HTTP_WRITEABLE:
 
       break;
-    case LWS_CALLBACK_CLOSED_CLIENT_HTTP:
-      // if (hrouter->spa && lws_spa_destroy(hrouter->spa)) {
-      // hrouter->spa = NULL;
-      // return -1;
-      // }
-      break;
+
+    case LWS_CALLBACK_WSI_CREATE:
+        
+    printf("wsi create ************************* ..request:%p...\n", request);
+    printf("wsi create ************************* ..request:%p...response :%p\n", request, request != NULL ? request->response : 0);
+
+    //lws_set_wsi_user(wsi, malloc(sizeof(struct hrouter_request)));
+
+    break;
+    //case LWS_CALLBACK_HTTP_BIND_PROTOCOL:
+        
+    //printf("bind protocol ..request:%p...response :%p\n", request, request != NULL ? request->response : 0);
+    //break;
+    //case LWS_CALLBACK_HTTP_DROP_PROTOCOL:
+    case LWS_CALLBACK_WSI_DESTROY: // user_space have been freed
+    //case LWS_CALLBACK_HTTP_DROP_PROTOCOL:
+
+
+
+
+        printf("wsi destroy ..request:%p...response :%p\n", request, request != NULL ? request->response : 0);
+        if (!request) {
+            break;
+        }
+
+        printf("drop protocol wsi:%p, request:%p, response:%p\n", wsi, request, request->response);
+        if (request->response) {
+            free(request->response);
+            request->response = NULL;
+        }
+        if (request->content) {
+            free(request->content);
+            request->content = NULL;
+        }
+
+        memset((void*)request, 0, sizeof(struct hrouter_request));
+
+        //free(request);
+        //lws_set_wsi_user(wsi, NULL);
+        break;
     default:
       break;
     }
