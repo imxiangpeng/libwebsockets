@@ -7,12 +7,17 @@
 static int _system_version_action_handler(struct hrouter_request *request) {
   cJSON *root = NULL;
   cJSON *result = NULL;
-  if (!request || !request->content)
-    return -1;
 
-  root = cJSON_ParseWithLength(request->content, request->content_length);
+  printf("%s(%d): ...........................\n", __FUNCTION__, __LINE__);
+  if (!request || !request->content.data) {
+    printf("%s(%d): ...........................\n", __FUNCTION__, __LINE__);
+    return -1;
+  }
+
+  root = cJSON_ParseWithLength(request->content.data, request->content.offset);
   if (!root) {
-    printf("invalid data ....\n");
+    printf("%s(%d): ..........invalid data.................\n", __FUNCTION__,
+           __LINE__);
     return -1;
   }
 
@@ -39,13 +44,13 @@ static int _system_version_action_handler(struct hrouter_request *request) {
   cJSON_AddStringToObject(result, "hardware", "HW 1.0");
   cJSON_AddStringToObject(result, "os", "hsan 3.3.16");
 
-  if (request->response) {
-    char *ptr = request->response + request->response_offset;
+  if (request->response.data) {
+    char *ptr = request->response.data + request->response.offset;
     printf("request:%p, response:%p, ptr:%p, size:%ld, offset:%ld\n", request,
-           request->response, ptr, request->response_size,
-           request->response_offset);
+           request->response.data, ptr, request->response.size,
+           request->response.offset);
     int ret = cJSON_PrintPreallocated(
-        result, ptr, (int)(request->response_size - request->response_offset),
+        result, ptr, (int)(request->response.size - request->response.offset),
         0);
     if (ret != 1) {
       // memory maybe small
@@ -53,7 +58,7 @@ static int _system_version_action_handler(struct hrouter_request *request) {
       printf("%s(%d): failed maybe memory not enough.....\n", __FUNCTION__,
              __LINE__);
     }
-    request->response_offset += strlen(ptr) + 1; // end with'\0'
+    request->response.offset += strlen(ptr); // not contains with'\0'
   } else {
     // will be released later
     // request->response = cJSON_PrintUnformatted(result);

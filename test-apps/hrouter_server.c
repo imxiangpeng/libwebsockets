@@ -41,8 +41,11 @@ struct lws_context *context;
 static int test_options;
 
 /* http server gets files from this path */
+//#define LOCAL_RESOURCE_PATH
+//"/workspace/workspace/libwebsockets/share/libwebsockets-test-server"
 #define LOCAL_RESOURCE_PATH                                                    \
-  "/workspace/workspace/libwebsockets/share/libwebsockets-test-server"
+  "/home/alex/workspace/workspace/websockets/libwebsockets/share/"             \
+  "libwebsockets-test-server"
 char *resource_path = LOCAL_RESOURCE_PATH;
 #if defined(LWS_WITH_TLS) && defined(LWS_HAVE_SSL_CTX_set1_param)
 char crl_path[1024] = "";
@@ -53,28 +56,6 @@ enum lws_hrouter_request_method {
   HROUTER_HTTP_GET,
   HROUTER_HTTP_POST
 };
-/*struct hrouter_request {
-    enum lws_hrouter_request_method method;
-    unsigned long long content_length;
-    char* body_data;
-    size_t position;
-    struct lws_spa *spa;
-};*/
-
-/*static const char *const param_names[] = {
-    "action",
-    "adminname",
-    "adminpwd",
-    "PPPOEuser",
-    "PPPOEpassword",
-};*/
-
-/*enum enum_param_names {
-        EPN_TEXT,
-        EPN_SEND,
-        EPN_FILE,
-        EPN_UPLOAD,
-};*/
 
 extern int hrouter_server_system_init();
 // extern int hrouter_cgi_process(struct hrouter_request *request);
@@ -107,15 +88,57 @@ int hrouter_server_register_action(const char *action,
 
   return 0;
 }
-#if 0
-  static void _string_remove_quotes(char *str) {
-      size_t len = strlen(str);
-      if (str[0] == '\"' && str[len-1] == '\"') {
-          memmove(str, str+1, len-1);
-          str[len-1] = '\0';
-      }
+
+// please assign  buf->size
+int hrouter_buffer_alloc(struct _hrouter_buffer *buf, size_t size) {
+  if (!buf)
+    return -1;
+
+  assert(!buf->data);
+
+  // assert(buf->size > 0);
+  buf->offset = 0;
+  buf->size = size;
+  buf->data = (char *)calloc(1, buf->size);
+  if (!buf->data) {
+    lwsl_err("%s(%d): can not allocate memory ...\n", __FUNCTION__, __LINE__);
+    return -1;
   }
-#endif
+
+  return 0;
+}
+int hrouter_buffer_realloc(struct _hrouter_buffer *buf, size_t size) {
+  if (!buf || !buf->data)
+    return -1;
+
+  buf->data = (char *)realloc(buf->data, size);
+  if (!buf->data) {
+    lwsl_err("%s(%d): can not allocate memory ...\n", __FUNCTION__, __LINE__);
+    return -1;
+  }
+  buf->size = size;
+  return 0;
+}
+int hrouter_buffer_free(struct _hrouter_buffer *buf) {
+  if (!buf)
+    return -1;
+  buf->offset = 0;
+  memset((void *)buf->data, 0, buf->size);
+
+  free(buf->data);
+
+  memset((void *)buf, 0, sizeof(*buf));
+  return 0;
+}
+int hrouter_buffer_reset(struct _hrouter_buffer *buf) {
+  if (!buf || !buf->data)
+    return -1;
+  buf->offset = 0;
+  memset((void *)buf->data, 0, buf->size);
+
+  return 0;
+}
+
 static int _hrouter_server_action_process(struct hrouter_request *request) {
 
   size_t length = 0;
@@ -127,8 +150,17 @@ static int _hrouter_server_action_process(struct hrouter_request *request) {
   if (!request)
     return -1;
 
+  printf("2 content.data:%p, size:%ld, offset:%ld\n", request->content.data,
+         request->content.size, request->content.offset);
   const char *ptr = lws_json_simple_find(
-      request->content, request->content_length, "\"action\":", &length);
+      request->content.data, request->content.offset, "\"action\":", &length);
+
+  if (!ptr) {
+    lwsl_err("%s(%d): can not find valid action field..\n", __FUNCTION__,
+             __LINE__);
+    return -1;
+  }
+
   printf("mxp ....................len:%ld....action:%s, ptr:%s, ptr+1:%s, "
          "ptr+2:%s\n",
          length, action, ptr, ptr + 1, ptr + 2);
@@ -202,6 +234,7 @@ static int lws_callback_http(struct lws *wsi, enum lws_callback_reasons reason,
     /* non-mount-handled accesses will turn up here */
 
     /* dump the headers */
+    size_t content_length = 0;
 
     do {
       c = lws_token_to_string((enum lws_token_indexes)n);
@@ -263,17 +296,17 @@ static int lws_callback_http(struct lws *wsi, enum lws_callback_reasons reason,
         lws_hdr_copy(wsi, content_length_str, sizeof(content_length_str) - 1,
                      WSI_TOKEN_HTTP_CONTENT_LENGTH) > 0) {
 
-      request->content_length = (unsigned long long)atoll(content_length_str);
+      content_length = (unsigned long long)atoll(content_length_str);
 
-      lwsl_debug("%s: content length:%lld\n", __func__,
-                 request->content_length);
+      lwsl_debug("%s: content length:%ld\n", __func__, request->content.size);
     }
 #endif
 
     // if it's http get, it means that we can not find the page, return it ...
 #if 1
-    if (request->content_length != 0) {
+    if (content_length != 0) {
       // continue waiting more data
+      hrouter_buffer_alloc(&request->content, content_length + 1);
       return 0;
     }
 
@@ -291,21 +324,29 @@ static int lws_callback_http(struct lws *wsi, enum lws_callback_reasons reason,
     return 0;
   case LWS_CALLBACK_HTTP_BODY: {
 
-    if (!request->content) {
+    assert(request->content.size != 0);
+    assert(request->content.data != NULL);
+#if 0
+    if (!request->content.data) {
       // it maybe verify big data, so we using self buffer, or we using
       // preallocate large buffer
-      request->content = (char *)calloc(1, request->content_length);
-      request->content_offset = 0;
+      request->content.offset = 0;
+      request->content.data = (char *)calloc(1, request->content.size + 1);
+      if (!request->content.data) {
+          lwsl_err("%s(%d): can not allocate memory ...\n", __FUNCTION__, __LINE__);
+        return -1;
+      }
     }
+#endif
 
-    assert(request->content_offset + len <= request->content_length);
+    assert(request->content.offset + len <= request->content.size);
 
-    memcpy((void *)(request->content + request->content_offset), (void *)in,
-           len);
-    request->content_offset += len;
+    memcpy((void *)(request->content.data + request->content.offset),
+           (void *)in, len);
+    request->content.offset += len;
 
-    printf("position:%ld vs %lld\n", request->content_offset,
-           request->content_length);
+    printf("position:%ld vs %ld\n", request->content.offset,
+           request->content.size);
 
     return 0;
 
@@ -316,21 +357,30 @@ static int lws_callback_http(struct lws *wsi, enum lws_callback_reasons reason,
     int ret = 0;
     const char *server = "hrouter/1.0";
     const char *content_type = "application/json";
-    printf("full post data:%s\n", request->content);
+    printf("full post data:%s\n", request->content.data);
     unsigned char *start, *p, *end;
-    p = (unsigned char *)request->response_hdr + LWS_PRE;
-    start = p;
-    end = p + sizeof(request->response_hdr) - LWS_PRE - 1;
-
-    if (request->response) {
-      free(request->response);
-      request->response_offset = 0;
+    ret = hrouter_buffer_alloc(&request->response_hdr,
+                               HROUTER_SERVER_PRE_DEFAULT_HDR_SIZE);
+#if 0
+    request->response_hdr.size = HROUTER_SERVER_PRE_DEFAULT_HDR_SIZE;
+    request->response_hdr.data = (char*)calloc(1, HROUTER_SERVER_PRE_DEFAULT_HDR_SIZE);
+#endif
+    if (ret != 0) {
+      lwsl_err("%s(%d): can not allocate memory ...\n", __FUNCTION__, __LINE__);
+      return -1;
     }
 
-    request->response =
-        (char *)calloc(1, HROUTER_SERVER_PRE_DEFAULT_RESPONSE_SIZE);
-    request->response_size = HROUTER_SERVER_PRE_DEFAULT_RESPONSE_SIZE;
-    request->response_offset = 0;
+    p = (unsigned char *)request->response_hdr.data + LWS_PRE;
+    start = p;
+    end = p + request->response_hdr.size - LWS_PRE - 1;
+
+    ret = hrouter_buffer_alloc(&request->response,
+                               HROUTER_SERVER_PRE_DEFAULT_RESPONSE_SIZE);
+    if (ret != 0) {
+      lwsl_err("%s(%d): can not allocate memory ...\n", __FUNCTION__, __LINE__);
+      return -1;
+    }
+
     /*int ret =*/_hrouter_server_action_process(request);
 
     ret = lws_add_http_header_status(wsi, HTTP_STATUS_OK, &p, end);
@@ -344,13 +394,10 @@ static int lws_callback_http(struct lws *wsi, enum lws_callback_reasons reason,
                                        (unsigned char *)content_type,
                                        (int)strlen(content_type), &p, end);
     (void)ret;
-    size_t n = 0;
+    size_t n = request->response.offset;
 
     printf("wsi:%p, request:%p, response:%p\n", wsi, request,
-           request->response);
-    if (request->response) {
-      n = strlen(request->response);
-    }
+           request->response.data);
     ret = lws_add_http_header_content_length(wsi, (unsigned int)n, &p, end);
     (void)ret;
 
@@ -359,19 +406,12 @@ static int lws_callback_http(struct lws *wsi, enum lws_callback_reasons reason,
 
     lws_write(wsi, start, lws_ptr_diff_size_t(p, start),
               LWS_WRITE_HTTP_HEADERS);
-    lws_write(wsi, (unsigned char *)request->response, (unsigned int)n,
+    lws_write(wsi, (unsigned char *)request->response.data, (unsigned int)n,
               LWS_WRITE_HTTP_FINAL);
 
-    if (request->response) {
-      free(request->response);
-      request->response = NULL;
-      request->response_offset = 0;
-    }
-    if (request->content) {
-      free(request->content);
-      request->content = NULL;
-      request->content_offset = 0;
-    }
+    hrouter_buffer_free(&request->response_hdr);
+    hrouter_buffer_free(&request->response);
+    hrouter_buffer_free(&request->content);
     // request/user_space will auto be freed
     // memset((void*)request, 0, sizeof(struct hrouter_request));
 #if 0
@@ -412,6 +452,7 @@ static int lws_callback_http(struct lws *wsi, enum lws_callback_reasons reason,
 static int lws_callback_http_api(struct lws *wsi,
                                  enum lws_callback_reasons reason, void *user,
                                  void *in, size_t len) {
+  int ret = -1;
   struct hrouter_request *request = (struct hrouter_request *)user;
   switch (reason) {
   case LWS_CALLBACK_ESTABLISHED: {
@@ -420,58 +461,52 @@ static int lws_callback_http_api(struct lws *wsi,
   }
   case LWS_CALLBACK_RECEIVE: {
     lwsl_debug("recevied:%s, len:%ld, content:%p\n\n", (unsigned char *)in, len,
-               request->content);
+               request->content.data);
     request->is_ws = 1;
-    if (!request->content) {
-      request->content_length = len + 1;
-      request->content = (char *)calloc(1, request->content_length);
-      request->content_offset = 0;
+    ret = hrouter_buffer_alloc(&request->content,
+                               HROUTER_SERVER_PRE_DEFAULT_RESPONSE_SIZE);
+    if (ret != 0) {
+      lwsl_err("%s(%d): can not allocate memory ...\n", __FUNCTION__, __LINE__);
+      return -1;
     }
 
-    memcpy((void *)(request->content + request->content_offset), (void *)in,
-           len);
-    request->content_offset += len;
+    memset((void *)request->content.data, 0, request->content.size);
 
-    if (request->response) {
-      free(request->response);
-      request->response_offset = 0;
-      request->response_size = 0;
+    printf("content.data:%p, size:%ld, offset:%ld\n", request->content.data,
+           request->content.size, request->content.offset);
+
+    memcpy((void *)(request->content.data + request->content.offset),
+           (void *)in, len);
+    request->content.offset += len;
+
+    printf("ws content data:%s, length:%ld\n", request->content.data,
+           strlen(request->content.data));
+
+    ret = hrouter_buffer_alloc(&request->response,
+                               HROUTER_SERVER_PRE_DEFAULT_RESPONSE_SIZE);
+    if (ret != 0) {
+      lwsl_err("%s(%d): can not allocate memory ...\n", __FUNCTION__, __LINE__);
+      return -1;
     }
-
-    request->response =
-        (char *)calloc(1, HROUTER_SERVER_PRE_DEFAULT_RESPONSE_SIZE);
-    request->response_size = HROUTER_SERVER_PRE_DEFAULT_RESPONSE_SIZE;
-    request->response_offset = 0;
 
     // reserve LSW_PRE for ws
-    request->response_offset = LWS_PRE;
+    request->response.offset = LWS_PRE;
 
     printf("mxp request:%p, response:%p, ptr:%p, size:%ld, offset:%ld\n",
-           request, request->response, request->response + LWS_PRE,
-           request->response_size, request->response_offset);
+           request, request->response.data, request->response.data + LWS_PRE,
+           request->response.size, request->response.offset);
     _hrouter_server_action_process(request);
 
-    // lws_write(wsi, (unsigned char *)in, len, LWS_WRITE_TEXT);
-    // size_t size = strlen(request->response + LSW_PRE);
-    printf("write len:%ld, %s\n", strlen(request->response), request->response);
+    printf("write len:%ld, %s\n", strlen(request->response.data + LWS_PRE),
+           request->response.data + LWS_PRE);
 
-    lws_write(wsi, (unsigned char *)request->response + LWS_PRE,
-              request->response_offset - LWS_PRE - 1 /*remove null char*/,
+    lws_write(wsi, (unsigned char *)request->response.data + LWS_PRE,
+              request->response.offset - LWS_PRE /*remove null char*/,
               LWS_WRITE_TEXT);
 
-    if (request->content) {
-      free(request->content);
-      request->content = NULL;
-    }
-
-      // do not release here for same connection ...
-    if (request->response) {
-      free(request->response);
-      request->response = NULL;
-      request->response_size = 0;
-      request->response_offset = 0;
-    }
-
+    // do not release here for same connection ...
+    hrouter_buffer_free(&request->response);
+    hrouter_buffer_free(&request->content);
     break;
   }
   default:

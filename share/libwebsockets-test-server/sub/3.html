@@ -41,14 +41,23 @@
         document.getElementById('sendButton').addEventListener('click', function () {
             // 创建一个要发送的 JSON 对象
             var data = {
-                key1: 'value1',
-                key2: 'value2'
+                action: '/system/version',
+                msgid: 'msgid1234567890',
+                data: {
+                  arg1:"arg1",
+                  arg2:"arg2",
+                  arg3:"arg3",
+                  arg4:"arg4",
+                  arg5:"arg5"
+          }
             };
 
             // 将 JSON 对象转换为字符串，并发送给服务器
             str = JSON.stringify(data);
             console.log("send:" + str)
+            for (i = 0; i < 50000; i++) {
             socket.send(str);
+            }
         });
     </script>
 </body>
