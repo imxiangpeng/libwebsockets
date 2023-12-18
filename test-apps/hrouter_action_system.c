@@ -8,16 +8,12 @@ static int _system_version_action_handler(struct hrouter_request *request) {
   cJSON *root = NULL;
   cJSON *result = NULL;
 
-  printf("%s(%d): ...........................\n", __FUNCTION__, __LINE__);
-  if (!request || !request->content.data) {
-    printf("%s(%d): ...........................\n", __FUNCTION__, __LINE__);
+  if (!request || !request->content.data || !request->response.data) {
     return -1;
   }
 
   root = cJSON_ParseWithLength(request->content.data, request->content.offset);
   if (!root) {
-    printf("%s(%d): ..........invalid data.................\n", __FUNCTION__,
-           __LINE__);
     return -1;
   }
 
@@ -28,14 +24,13 @@ static int _system_version_action_handler(struct hrouter_request *request) {
     cJSON_Delete(root);
     return -1;
   }
-
-#endif
-
   char *str = cJSON_PrintUnformatted(root);
 
   printf("got :%s\n", str);
 
   free(str);
+
+#endif
 
   cJSON_Delete(root);
 
@@ -57,11 +52,19 @@ static int _system_version_action_handler(struct hrouter_request *request) {
       // reallocate
       printf("%s(%d): failed maybe memory not enough.....\n", __FUNCTION__,
              __LINE__);
+      hrouter_buffer_realloc(&request->response, request->response.size * 2);
+      int ret = cJSON_PrintPreallocated(
+          result, ptr, (int)(request->response.size - request->response.offset),
+          0);
+      if (ret != -1) {
+
+        printf("%s(%d): failed maybe memory not enough.....\n", __FUNCTION__,
+               __LINE__);
+        cJSON_Delete(result);
+        return -1;
+      }
     }
     request->response.offset += strlen(ptr); // not contains with'\0'
-  } else {
-    // will be released later
-    // request->response = cJSON_PrintUnformatted(result);
   }
   cJSON_Delete(result);
 

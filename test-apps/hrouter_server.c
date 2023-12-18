@@ -1,26 +1,8 @@
-/*
- * libwebsockets-test-server - libwebsockets test implementation
- *
- * Written in 2010-2019 by Andy Green <andy@warmcat.com>
- *
- * This file is made available under the Creative Commons CC0 1.0
- * Universal Public Domain Dedication.
- *
- * The person who associated a work with this deed has dedicated
- * the work to the public domain by waiving all of his or her rights
- * to the work worldwide under copyright law, including all related
- * and neighboring rights, to the extent allowed by law. You can copy,
- * modify, distribute and perform the work, even for commercial purposes,
- * all without asking permission.
- *
- * The test apps are intended to be adapted for use in your code, which
- * may be proprietary.	So unlike the library itself, they are licensed
- * Public Domain.
- */
 #include <assert.h>
 #include <getopt.h>
 #include <libwebsockets.h>
 #include <signal.h>
+#include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -51,12 +33,6 @@ char *resource_path = LOCAL_RESOURCE_PATH;
 char crl_path[1024] = "";
 #endif
 
-enum lws_hrouter_request_method {
-  HROUTER_HTTP_UNKNOWN = 0,
-  HROUTER_HTTP_GET,
-  HROUTER_HTTP_POST
-};
-
 extern int hrouter_server_system_init();
 // extern int hrouter_cgi_process(struct hrouter_request *request);
 
@@ -66,6 +42,7 @@ struct _hrouter_action_entry {
   int need_auth;
   STAILQ_ENTRY(_hrouter_action_entry) next;
 };
+
 static STAILQ_HEAD(_hrouter_action_head, _hrouter_action_entry)
     _hrouter_action_queue = STAILQ_HEAD_INITIALIZER(_hrouter_action_queue);
 
@@ -75,7 +52,6 @@ int hrouter_server_register_action(const char *action,
 
   struct _hrouter_action_entry *entry = (struct _hrouter_action_entry *)calloc(
       sizeof(struct _hrouter_action_entry), 1);
-
   if (!entry) {
     return -1;
   }
@@ -165,13 +141,10 @@ static int _hrouter_server_action_process(struct hrouter_request *request) {
          "ptr+2:%s\n",
          length, action, ptr, ptr + 1, ptr + 2);
 
-  for (size_t l = 0; l < length; l++) {
-    printf("i:%02ld, %c\n", l, ptr[l]);
-  }
-  //if (ptr[0] == '\"' && ptr[length - 1] == '\0') {
-  //  strncpy(action, ptr + 1, length - 2);
-  //} else {
-    strncpy(action, ptr, length);
+  // if (ptr[0] == '\"' && ptr[length - 1] == '\0') {
+  //   strncpy(action, ptr + 1, length - 2);
+  // } else {
+  strncpy(action, ptr, length);
   //}
 
   printf("mxp ....................len:%ld....action:%s, ptr:%s\n", length,
@@ -194,69 +167,35 @@ static int _hrouter_server_action_process(struct hrouter_request *request) {
 
 static int lws_callback_http(struct lws *wsi, enum lws_callback_reasons reason,
                              void *user, void *in, size_t len) {
-  const unsigned char *c;
+  // const unsigned char *c;
   char *uri_ptr = NULL;
   int uri_len = 0;
+  size_t content_length = 0;
   char content_length_str[32] = {0};
-  char buf[1024];
-  int n = 0, hlen;
+  // char buf[1024];
+  // int n = 0, len;
 
   struct hrouter_request *request = (struct hrouter_request *)user;
   printf("%s(%d): ...........wsi:%p, hrouter:%p..........reason:%d..........\n",
          __FUNCTION__, __LINE__, (void *)wsi, (void *)request, reason);
+
+  lwsl_err(
+      "%s(%d): ...........wsi:%p, hrouter:%p..........reason:%d..........\n",
+      __FUNCTION__, __LINE__, (void *)wsi, (void *)request, reason);
   lwsl_err("%s: reason: %d\n", __func__, reason);
   switch (reason) {
   case LWS_CALLBACK_FILTER_NETWORK_CONNECTION:
     break;
   case LWS_CALLBACK_FILTER_HTTP_CONNECTION:
     break;
-
+  case LWS_CALLBACK_SERVER_NEW_CLIENT_INSTANTIATED: // 19 wsi have created
+                                                    //
+    break;
+  case LWS_CALLBACK_EVENT_WAIT_CANCELLED: //			= 71,
+    break;
   case LWS_CALLBACK_HTTP:
 
     /* non-mount-handled accesses will turn up here */
-
-    /* dump the headers */
-    size_t content_length = 0;
-
-    do {
-      c = lws_token_to_string((enum lws_token_indexes)n);
-      if (!c) {
-        n++;
-        continue;
-      }
-      printf("token:n:%d -> %s\n", n, c);
-
-      hlen = lws_hdr_total_length(wsi, (enum lws_token_indexes)n);
-      if (!hlen || hlen > (int)sizeof(buf) - 1) {
-        n++;
-        continue;
-      }
-
-      if (lws_hdr_copy(wsi, buf, sizeof buf, (enum lws_token_indexes)n) < 0)
-        fprintf(stderr, "    %s (too big)\n", (char *)c);
-      else {
-        buf[sizeof(buf) - 1] = '\0';
-        printf("   1 %s = %s\n", (char *)c, buf);
-        fprintf(stderr, "    %s = %s\n", (char *)c, buf);
-        lwsl_debug("%s: %s --> buf:%s\n", __func__, c, buf);
-      }
-      n++;
-    } while (c);
-
-    /* dump the individual URI Arg parameters */
-
-    n = 0;
-    while (lws_hdr_copy_fragment(wsi, buf, sizeof(buf), WSI_TOKEN_HTTP_URI_ARGS,
-                                 n) > 0) {
-      lwsl_notice("URI Arg %d: %s\n", ++n, buf);
-      lwsl_debug("%s: buf:%s\n", __func__, buf);
-    }
-
-    char value[100];
-    int z =
-        lws_get_urlarg_by_name_safe(wsi, "PPPOEuser", value, sizeof(value) - 1);
-    (void)z;
-    lwsl_debug("%s: PPPOEuser .....:%s\n", __func__, value);
 
     int meth = lws_http_get_uri_and_method(wsi, &uri_ptr, &uri_len);
     if (/*meth != LWSHUMETH_GET &&*/ meth != LWSHUMETH_POST) {
@@ -273,7 +212,6 @@ static int lws_callback_http(struct lws *wsi, enum lws_callback_reasons reason,
     lwsl_debug("%s: header method:%d  uri_ptr:%p, len:%d ..in:%p, len:%ld.\n",
                __func__, meth, (void *)uri_ptr, uri_len, (void *)in, len);
 
-#if 1
     if (lws_hdr_total_length(wsi, WSI_TOKEN_HTTP_CONTENT_LENGTH) &&
         lws_hdr_copy(wsi, content_length_str, sizeof(content_length_str) - 1,
                      WSI_TOKEN_HTTP_CONTENT_LENGTH) > 0) {
@@ -282,10 +220,7 @@ static int lws_callback_http(struct lws *wsi, enum lws_callback_reasons reason,
 
       lwsl_debug("%s: content length:%ld\n", __func__, request->content.size);
     }
-#endif
 
-    // if it's http get, it means that we can not find the page, return it ...
-#if 1
     if (content_length != 0) {
       // continue waiting more data
       hrouter_buffer_alloc(&request->content, content_length + 1);
@@ -302,25 +237,12 @@ static int lws_callback_http(struct lws *wsi, enum lws_callback_reasons reason,
                  __func__);
       return -1;
     }
-#endif
+
     return 0;
   case LWS_CALLBACK_HTTP_BODY: {
 
     assert(request->content.size != 0);
     assert(request->content.data != NULL);
-#if 0
-    if (!request->content.data) {
-      // it maybe verify big data, so we using self buffer, or we using
-      // preallocate large buffer
-      request->content.offset = 0;
-      request->content.data = (char *)calloc(1, request->content.size + 1);
-      if (!request->content.data) {
-          lwsl_err("%s(%d): can not allocate memory ...\n", __FUNCTION__, __LINE__);
-        return -1;
-      }
-    }
-#endif
-
     assert(request->content.offset + len <= request->content.size);
 
     memcpy((void *)(request->content.data + request->content.offset),
@@ -394,29 +316,11 @@ static int lws_callback_http(struct lws *wsi, enum lws_callback_reasons reason,
     hrouter_buffer_free(&request->response_hdr);
     hrouter_buffer_free(&request->response);
     hrouter_buffer_free(&request->content);
-    // request/user_space will auto be freed
-    // memset((void*)request, 0, sizeof(struct hrouter_request));
-#if 0
-      if (lws_return_http_status(wsi, HTTP_STATUS_OK, hrouter->response))
-        return -1;
-#endif
-/*
- * Our response is to redirect to a static page.  We could
- * have generated a dynamic html page here instead.
- */
-#if 0
-          if (lws_http_redirect(wsi, use303 ? HTTP_STATUS_SEE_OTHER :
-                                HTTP_STATUS_MOVED_PERMANENTLY,
-                                (unsigned char *)"after-form1.html",
-                                16, &p, end) < 0)
-          return -1;
-#endif
-#if 1
+
     lwsl_debug("%s: this is body completion transaction completed  ....\n",
                __func__);
     if (lws_http_transaction_completed(wsi)) {
     }
-#endif
     return 0;
     break;
 
@@ -436,14 +340,14 @@ static int lws_callback_http_api(struct lws *wsi,
                                  void *in, size_t len) {
   int ret = -1;
   struct hrouter_request *request = (struct hrouter_request *)user;
+  printf("%s(%d): ...........wsi:%p, hrouter:%p..........reason:%d..........\n",
+         __FUNCTION__, __LINE__, (void *)wsi, (void *)request, reason);
+  lwsl_err(
+      "%s(%d): ...........wsi:%p, hrouter:%p..........reason:%d..........\n",
+      __FUNCTION__, __LINE__, (void *)wsi, (void *)request, reason);
   switch (reason) {
   case LWS_CALLBACK_ESTABLISHED: {
-    lwsl_debug("New connection established\n");
-    break;
-  }
-  case LWS_CALLBACK_RECEIVE: {
-    lwsl_debug("recevied:%s, len:%ld, content:%p\n\n", (unsigned char *)in, len,
-               request->content.data);
+    lwsl_err("New connection established\n");
     request->is_ws = 1;
     ret = hrouter_buffer_alloc(&request->content,
                                HROUTER_SERVER_PRE_DEFAULT_RESPONSE_SIZE);
@@ -453,17 +357,6 @@ static int lws_callback_http_api(struct lws *wsi,
     }
 
     memset((void *)request->content.data, 0, request->content.size);
-
-    printf("content.data:%p, size:%ld, offset:%ld\n", request->content.data,
-           request->content.size, request->content.offset);
-
-    memcpy((void *)(request->content.data + request->content.offset),
-           (void *)in, len);
-    request->content.offset += len;
-
-    printf("ws content data:%s, length:%ld\n", request->content.data,
-           strlen(request->content.data));
-
     ret = hrouter_buffer_alloc(&request->response,
                                HROUTER_SERVER_PRE_DEFAULT_RESPONSE_SIZE);
     if (ret != 0) {
@@ -471,6 +364,39 @@ static int lws_callback_http_api(struct lws *wsi,
       return -1;
     }
 
+    break;
+  }
+  case LWS_CALLBACK_CLOSED: {
+    lwsl_err("connection closed\n");
+
+    // do not release here for same connection ...
+    hrouter_buffer_free(&request->response);
+    hrouter_buffer_free(&request->content);
+    break;
+  }
+  case LWS_CALLBACK_RECEIVE: {
+    lwsl_debug("recevied:%s, len:%ld, content:%p\n\n", (unsigned char *)in, len,
+               request->content.data);
+
+    printf("content.data:%p, size:%ld, offset:%ld\n", request->content.data,
+           request->content.size, request->content.offset);
+
+    assert(request->content.data != NULL);
+    assert(request->response.data != NULL);
+
+    // assume all data will be received once.
+    if ( len > request->content.size) {
+      hrouter_buffer_realloc(&request->content, len);
+    }
+    hrouter_buffer_reset(&request->content);
+    memcpy((void *)(request->content.data /*+ request->content.offset*/),
+           (void *)in, len);
+    request->content.offset += len;
+
+    printf("ws content data:%s, length:%ld\n", request->content.data,
+           strlen(request->content.data));
+
+    hrouter_buffer_reset(&request->response);
     // reserve LSW_PRE for ws
     request->response.offset = LWS_PRE;
 
@@ -486,9 +412,6 @@ static int lws_callback_http_api(struct lws *wsi,
               request->response.offset - LWS_PRE /*remove null char*/,
               LWS_WRITE_TEXT);
 
-    // do not release here for same connection ...
-    hrouter_buffer_free(&request->response);
-    hrouter_buffer_free(&request->content);
     break;
   }
   default:
@@ -509,29 +432,6 @@ static struct lws_protocols protocols[] = {
     // NULL, 0 },
     LWS_PROTOCOL_LIST_TERM};
 
-#if 0
-  /* this shows how to override the lws file operations.	You don't need
-  * to do any of this unless you have a reason (eg, want to serve
-  * compressed files without decompressing the whole archive)
-  */
-  static lws_fop_fd_t
-  test_server_fops_open(const struct lws_plat_file_ops *this_fops,
-                        const struct lws_plat_file_ops *fops,
-                        const char *vfs_path, const char *vpath,
-                        lws_fop_flags_t *flags) {
-      lws_fop_fd_t fop_fd;
-
-      /* call through to original platform implementation */
-      fop_fd = fops_plat.open(fops, fops, vfs_path, vpath, flags);
-
-      if (fop_fd) lwsl_info("%s: opening %s, ret %p, len %lu\n", __func__,
-                            vfs_path, fop_fd,
-                            (long)lws_vfs_get_length(fop_fd));
-      else lwsl_info("%s: open %s failed\n", __func__, vfs_path);
-
-      return fop_fd;
-  }
-#endif
 void sighandler(int sig) {
 
   force_exit = 1;

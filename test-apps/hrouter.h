@@ -3,7 +3,9 @@
 
 #include "libwebsockets.h"
 
+// default http header buffer size
 #define HROUTER_SERVER_PRE_DEFAULT_HDR_SIZE (LWS_PRE + 512) 
+// default response buffer size
 #define HROUTER_SERVER_PRE_DEFAULT_RESPONSE_SIZE (LWS_PRE + 1024)
 
 struct _hrouter_buffer {

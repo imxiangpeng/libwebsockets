@@ -7,11 +7,17 @@
     <title>WebSocket Example</title>
 </head>
 <body>
+<button id="connectButton">Connect JSON Data</button>
     <button id="sendButton">Send JSON Data</button>
 
     <script>
         // 创建一个 WebSocket 连接
-        const socket = new WebSocket('ws://localhost:7681', 'api');
+        var socket;
+
+        // 当点击 "Send JSON Data" 按钮时触发的事件处理程序
+        document.getElementById('connectButton').addEventListener('click', function () {
+
+socket = new WebSocket('ws://localhost:7681', 'api');
 
         // 当连接建立时触发的回调函数
         socket.addEventListener('open', function (event) {
@@ -36,7 +42,7 @@
         socket.addEventListener('close', function (event) {
             console.log('Connection closed');
         });
-
+        });
         // 当点击 "Send JSON Data" 按钮时触发的事件处理程序
         document.getElementById('sendButton').addEventListener('click', function () {
             // 创建一个要发送的 JSON 对象
@@ -55,10 +61,27 @@
             // 将 JSON 对象转换为字符串，并发送给服务器
             str = JSON.stringify(data);
             console.log("send:" + str)
-            for (i = 0; i < 50000; i++) {
-            socket.send(str);
-            }
+            //for (i = 0; i < 1000000000000; i++) {
+            //socket.send(str);
+            //}
+            
+                            // 定义发送数据的间隔时间（单位：毫秒）
+        var sendInterval = 1; // 每隔5秒发送一次数据
+
+        // 开始定时发送数据
+        setInterval(function () {
+            // 将 JSON 对象转换为字符串，并发送给服务器
+            socket.send(JSON.stringify(data));
+            console.log('Sent message:', data);
+        }, sendInterval);
+        
+        
         });
+        
+        
+
+        
+        
     </script>
 </body>
 </html>
