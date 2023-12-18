@@ -168,11 +168,11 @@ static int _hrouter_server_action_process(struct hrouter_request *request) {
   for (size_t l = 0; l < length; l++) {
     printf("i:%02ld, %c\n", l, ptr[l]);
   }
-  if (ptr[0] == '\"' && ptr[length - 1] == '\0') {
-    strncpy(action, ptr + 1, length - 2);
-  } else {
+  //if (ptr[0] == '\"' && ptr[length - 1] == '\0') {
+  //  strncpy(action, ptr + 1, length - 2);
+  //} else {
     strncpy(action, ptr, length);
-  }
+  //}
 
   printf("mxp ....................len:%ld....action:%s, ptr:%s\n", length,
          action, ptr);
@@ -190,24 +190,6 @@ static int _hrouter_server_action_process(struct hrouter_request *request) {
   printf("can not find action ..ignore ..\n");
 
   return -1;
-
-#if 0
-    printf("mxp ....................len:%ld....action:%s, ptr:%s\n", length, action,
-          ptr);
-
-    ptr = lws_json_simple_find(request->content, request->content_length,
-                              "\"msgid\"", &length);
-
-    strncpy(buf, ptr, length);
-    buf[length] = '\0';
-    printf("mxp ....................len:%ld....msgid:%s\n", length, buf);
-    printf("mxp ....................len:%ld....action:%s, ptr:%s\n", length, buf,
-          ptr);
-
-    //request->response =
-    //    "{\"result\":\"0\",\"msgid\":\"1234567890\", \"data\":{}}";
-    return 0;
-#endif
 }
 
 static int lws_callback_http(struct lws *wsi, enum lws_callback_reasons reason,
@@ -498,7 +480,7 @@ static int lws_callback_http_api(struct lws *wsi,
     _hrouter_server_action_process(request);
 
     printf("write len:%ld, %s\n", strlen(request->response.data + LWS_PRE),
-           request->response.data + LWS_PRE);
+           request->response.data);
 
     lws_write(wsi, (unsigned char *)request->response.data + LWS_PRE,
               request->response.offset - LWS_PRE /*remove null char*/,
