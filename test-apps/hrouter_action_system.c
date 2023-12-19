@@ -77,13 +77,10 @@ static struct _action_handler {
   int need_auth;
 } _action_handler_tbl[] = {
     {"/system/version", _system_version_action_handler, 0},
-    {NULL, NULL, 0},
     {"/system/memory", _system_version_action_handler, 0},
-    {NULL, NULL, 0},
     {"/system/disk", _system_version_action_handler, 0},
-    {NULL, NULL, 0},
+    {"/system/upgrade", _system_version_action_handler, 0},
     {NULL, NULL, 0}
-
 };
 
 static int _system_action_handler(const char *action,
