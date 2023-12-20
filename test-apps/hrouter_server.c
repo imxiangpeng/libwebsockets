@@ -13,26 +13,17 @@
 
 #include "hrouter.h"
 
-int close_testing;
-int debug_level = LLL_USER | 7;
+int debug_level = LLL_USER | 0x1FFFFFFF;
+volatile int force_exit = 0;
 
-volatile int force_exit = 0, dynamic_vhost_enable = 0;
-// struct lws_vhost *dynamic_vhost;
-struct lws_context *context;
-// struct lws_plat_file_ops fops_plat;
-static int test_options;
+static struct lws_context *context = NULL;
 
-/* http server gets files from this path */
+//#define LOCAL_RESOURCE_PATH "/usr/httpd/web/web/"
 //#define LOCAL_RESOURCE_PATH
-//"/workspace/workspace/libwebsockets/share/libwebsockets-test-server"
-#define LOCAL_RESOURCE_PATH                                                    \
-  "/home/alex/workspace/workspace/websockets/libwebsockets/share/"             \
-  "libwebsockets-test-server"
-char *resource_path = LOCAL_RESOURCE_PATH;
-#if defined(LWS_WITH_TLS) && defined(LWS_HAVE_SSL_CTX_set1_param)
-char crl_path[1024] = "";
-#endif
+//"/home/alex/workspace/workspace/websockets/libwebsockets/share/libwebsockets-test-server"
 
+#define LOCAL_RESOURCE_PATH                                                    \
+  "/home/alex/workspace/hisilicon/HSAN/output/rootfs/usr/httpd/web/web/"
 extern int hrouter_server_system_init();
 // extern int hrouter_cgi_process(struct hrouter_request *request);
 
@@ -65,7 +56,6 @@ int hrouter_server_register_action(const char *action,
   return 0;
 }
 
-// please assign  buf->size
 int hrouter_buffer_alloc(struct _hrouter_buffer *buf, size_t size) {
   if (!buf)
     return -1;
@@ -99,9 +89,11 @@ int hrouter_buffer_free(struct _hrouter_buffer *buf) {
   if (!buf)
     return -1;
   buf->offset = 0;
-  memset((void *)buf->data, 0, buf->size);
 
-  free(buf->data);
+  if (buf->data) {
+    memset((void *)buf->data, 0, buf->size);
+    free(buf->data);
+  }
 
   memset((void *)buf, 0, sizeof(*buf));
   return 0;
@@ -122,14 +114,21 @@ static int _hrouter_server_action_process(struct hrouter_request *request) {
   // char buf[32] = {0};
 
   struct _hrouter_action_entry *ele = NULL;
+  const char *ptr = NULL;
 
   if (!request)
     return -1;
 
   printf("2 content.data:%p, size:%ld, offset:%ld\n", request->content.data,
          request->content.size, request->content.offset);
-  const char *ptr = lws_json_simple_find(
-      request->content.data, request->content.offset, "\"action\":", &length);
+
+  if (request->is_ws) {
+    ptr = lws_json_simple_find(request->content.data, request->content.offset,
+                               "\"action\":", &length);
+  } else {
+    ptr = request->uri;
+    length = strlen(request->uri);
+  }
 
   if (!ptr) {
     lwsl_err("%s(%d): can not find valid action field..\n", __FUNCTION__,
@@ -165,6 +164,66 @@ static int _hrouter_server_action_process(struct hrouter_request *request) {
   return -1;
 }
 
+static int _hrouter_http_data_process(struct lws *wsi,
+                                      struct hrouter_request *request) {
+  int ret = 0;
+  const char *content_type = "application/json";
+  printf("full post data:%s\n",
+         request->content.data ? request->content.data : "none");
+  unsigned char *start, *p, *end;
+  ret = hrouter_buffer_alloc(&request->response_hdr,
+                             HROUTER_SERVER_PRE_DEFAULT_HDR_SIZE);
+  if (ret != 0) {
+    lwsl_err("%s(%d): can not allocate memory ...\n", __FUNCTION__, __LINE__);
+    return -1;
+  }
+
+  p = (unsigned char *)request->response_hdr.data + LWS_PRE;
+  start = p;
+  end = p + request->response_hdr.size - LWS_PRE - 1;
+
+  ret = hrouter_buffer_alloc(&request->response,
+                             HROUTER_SERVER_PRE_DEFAULT_RESPONSE_SIZE);
+  if (ret != 0) {
+    hrouter_buffer_free(&request->response_hdr);
+    lwsl_err("%s(%d): can not allocate memory ...\n", __FUNCTION__, __LINE__);
+    return -1;
+  }
+
+  /*int ret =*/_hrouter_server_action_process(request);
+
+  printf("mxp: response length:%ld, data:%s\n", request->response.offset, request->response.data);
+  ret = lws_add_http_header_status(wsi, HTTP_STATUS_OK, &p, end);
+  (void)ret;
+
+  // ret = lws_add_http_header_by_token(wsi, WSI_TOKEN_HTTP_SERVER,
+  //                                    (const unsigned char *)server,
+  //                                    (int)strlen(server), &p, end);
+  //(void)ret;
+  ret = lws_add_http_header_by_token(wsi, WSI_TOKEN_HTTP_CONTENT_TYPE,
+                                     (unsigned char *)content_type,
+                                     (int)strlen(content_type), &p, end);
+  (void)ret;
+  size_t n = request->response.offset;
+
+  printf("wsi:%p, request:%p, response:%p\n", wsi, request,
+         request->response.data);
+  ret = lws_add_http_header_content_length(wsi, (unsigned int)n, &p, end);
+  (void)ret;
+
+  ret = lws_finalize_http_header(wsi, &p, end);
+  (void)ret;
+
+  lws_write(wsi, start, lws_ptr_diff_size_t(p, start), LWS_WRITE_HTTP_HEADERS);
+  lws_write(wsi, (unsigned char *)request->response.data, (unsigned int)n,
+            LWS_WRITE_HTTP_FINAL);
+
+  hrouter_buffer_free(&request->response_hdr);
+  hrouter_buffer_free(&request->response);
+  hrouter_buffer_free(&request->content);
+
+  return 0;
+}
 static int lws_callback_http(struct lws *wsi, enum lws_callback_reasons reason,
                              void *user, void *in, size_t len) {
   // const unsigned char *c;
@@ -195,7 +254,7 @@ static int lws_callback_http(struct lws *wsi, enum lws_callback_reasons reason,
     break;
   case LWS_CALLBACK_HTTP:
 
-    /* non-mount-handled accesses will turn up here */
+  {
 
     int meth = lws_http_get_uri_and_method(wsi, &uri_ptr, &uri_len);
     if (/*meth != LWSHUMETH_GET &&*/ meth != LWSHUMETH_POST) {
@@ -227,17 +286,20 @@ static int lws_callback_http(struct lws *wsi, enum lws_callback_reasons reason,
       return 0;
     }
 
+    _hrouter_http_data_process(wsi, request);
+#if 0
     if (lws_return_http_status(wsi, HTTP_STATUS_NOT_FOUND, NULL)) {
       lwsl_debug("%s: return http status , close ....\n", __func__);
       return -1;
     }
+#endif
 
     if (lws_http_transaction_completed(wsi)) {
       lwsl_debug("%s: return http status , transaction completed  ....\n",
                  __func__);
       return -1;
     }
-
+  }
     return 0;
   case LWS_CALLBACK_HTTP_BODY: {
 
@@ -256,8 +318,10 @@ static int lws_callback_http(struct lws *wsi, enum lws_callback_reasons reason,
 
     break;
   }
-  case LWS_CALLBACK_HTTP_BODY_COMPLETION:
+  case LWS_CALLBACK_HTTP_BODY_COMPLETION: {
 
+    _hrouter_http_data_process(wsi, request);
+#if 0
     int ret = 0;
     const char *server = "hrouter/1.0";
     const char *content_type = "application/json";
@@ -319,11 +383,12 @@ static int lws_callback_http(struct lws *wsi, enum lws_callback_reasons reason,
 
     lwsl_debug("%s: this is body completion transaction completed  ....\n",
                __func__);
+#endif
     if (lws_http_transaction_completed(wsi)) {
     }
     return 0;
     break;
-
+  }
   case LWS_CALLBACK_HTTP_WRITEABLE:
 
     break;
@@ -385,7 +450,7 @@ static int lws_callback_http_api(struct lws *wsi,
     assert(request->response.data != NULL);
 
     // assume all data will be received once.
-    if ( len > request->content.size) {
+    if (len > request->content.size) {
       hrouter_buffer_realloc(&request->content, len);
     }
     hrouter_buffer_reset(&request->content);
@@ -422,7 +487,6 @@ static int lws_callback_http_api(struct lws *wsi,
 }
 
 /* list of supported protocols and callbacks */
-
 static struct lws_protocols protocols[] = {
     /* first protocol must always be HTTP handler */
     {"http", lws_callback_http, sizeof(struct hrouter_request), 0, 0, NULL, 0},
@@ -448,7 +512,7 @@ static const struct lws_http_mount mount = {
     /* .mount_next */ NULL,            /* linked-list "next" */
     /* .mountpoint */ "/",             /* mountpoint URL */
     /* .origin */ LOCAL_RESOURCE_PATH, /* serve from dir */
-    /* .def */ "test.html",            /* default filename */
+    /* .def */ "index.html",           /* default filename */
     /* .protocol */ NULL,
     /* .cgienv */ NULL,
     /* .extra_mimetypes */ NULL,
@@ -465,155 +529,18 @@ static const struct lws_http_mount mount = {
     /* .basic_auth_login_file */ NULL,
 };
 
-static struct option options[] = {
-    {"help", no_argument, NULL, 'h'},
-    {"debug", required_argument, NULL, 'd'},
-    {"port", required_argument, NULL, 'p'},
-    {"ssl", no_argument, NULL, 's'},
-    {"allow-non-ssl", no_argument, NULL, 'a'},
-    {"interface", required_argument, NULL, 'i'},
-    {"closetest", no_argument, NULL, 'c'},
-    {"ssl-cert", required_argument, NULL, 'C'},
-    {"ssl-key", required_argument, NULL, 'K'},
-    {"ssl-ca", required_argument, NULL, 'A'},
-    {"resource-path", required_argument, NULL, 'r'},
-#if defined(LWS_WITH_TLS)
-    {"ssl-verify-client", no_argument, NULL, 'v'},
-#if defined(LWS_HAVE_SSL_CTX_set1_param)
-    {"ssl-crl", required_argument, NULL, 'R'},
-#endif
-#endif
-    {"libev", no_argument, NULL, 'e'},
-    {"unix-socket", required_argument, NULL, 'U'},
-#ifndef LWS_NO_DAEMONIZE
-    {"daemonize", no_argument, NULL, 'D'},
-#endif
-    {"ignore-sigterm", no_argument, NULL, 'I'},
-
-    {NULL, 0, 0, 0}};
-
-static void sigterm_catch(int sig) {}
-
 int main(int argc, char **argv) {
   struct lws_context_creation_info info;
   struct lws_vhost *vhost;
-  char interface_name[128] = "";
-  const char *iface = NULL;
-  char cert_path[1024] = "";
-  char key_path[1024] = "";
-  char ca_path[1024] = "";
-#ifndef LWS_NO_DAEMONIZE
-  int daemonize = 0;
-#endif
-  uint64_t opts = 0;
-  int use_ssl = 0;
+
   uid_t uid = (uid_t)-1;
   gid_t gid = (gid_t)-1;
   int n = 0;
   struct _hrouter_action_entry *ele = NULL;
 
-  /*
-   * take care to zero down the info struct, he contains random garbaage
-   * from the stack otherwise
-   */
   memset(&info, 0, sizeof info);
+
   info.port = 7681;
-
-  while (n >= 0) {
-
-    n = getopt_long(argc, argv, "eci:hsap:d:DC:K:A:R:vu:g:kU:niIr:", options,
-                    NULL);
-    // n = getopt(argc, argv, "eci:hsap:d:DC:K:A:R:vu:g:kU:nIr:");
-    if (n < 0)
-      continue;
-    switch (n) {
-    case 'e':
-      opts |= LWS_SERVER_OPTION_LIBEV;
-      break;
-#ifndef LWS_NO_DAEMONIZE
-    case 'D':
-      daemonize = 1;
-      break;
-#endif
-    case 'u':
-      uid = (uid_t)atoi(optarg);
-      break;
-    case 'g':
-      gid = (gid_t)atoi(optarg);
-      break;
-    case 'd':
-      debug_level = atoi(optarg);
-      break;
-    case 'n':
-      /* no dumb increment send */
-      test_options |= 1;
-      break;
-    case 'I':
-      signal(SIGTERM, sigterm_catch);
-      break;
-    case 'r':
-      resource_path = optarg;
-      break;
-    case 's':
-      use_ssl = 1;
-      opts |= LWS_SERVER_OPTION_DO_SSL_GLOBAL_INIT;
-      break;
-    case 'a':
-      opts |= LWS_SERVER_OPTION_ALLOW_NON_SSL_ON_SSL_PORT;
-      break;
-    case 'p':
-      info.port = atoi(optarg);
-      break;
-    case 'i':
-      lws_strncpy(interface_name, optarg, sizeof interface_name);
-      iface = interface_name;
-      break;
-    case 'U':
-      lws_strncpy(interface_name, optarg, sizeof interface_name);
-      iface = interface_name;
-      opts |= LWS_SERVER_OPTION_UNIX_SOCK;
-      break;
-    case 'k':
-      info.bind_iface = 1;
-#if defined(LWS_HAVE_SYS_CAPABILITY_H) && defined(LWS_HAVE_LIBCAP)
-      info.caps[0] = CAP_NET_RAW;
-      info.count_caps = 1;
-#endif
-      break;
-    case 'c':
-      close_testing = 1;
-      fprintf(stderr, " Close testing mode -- closes on "
-                      "client after 50 dumb increments"
-                      "and suppresses lws_mirror spam\n");
-      break;
-    case 'C':
-      lws_strncpy(cert_path, optarg, sizeof(cert_path));
-      break;
-    case 'K':
-      lws_strncpy(key_path, optarg, sizeof(key_path));
-      break;
-    case 'A':
-      lws_strncpy(ca_path, optarg, sizeof(ca_path));
-      break;
-#if defined(LWS_WITH_TLS)
-    case 'v':
-      use_ssl = 1;
-      opts |= LWS_SERVER_OPTION_REQUIRE_VALID_OPENSSL_CLIENT_CERT;
-      break;
-
-#if defined(LWS_HAVE_SSL_CTX_set1_param)
-    case 'R':
-      lws_strncpy(crl_path, optarg, sizeof(crl_path));
-      break;
-#endif
-#endif
-    case 'h':
-      fprintf(stderr, "Usage: test-server "
-                      "[--port=<p>] [--ssl] "
-                      "[-d <log bitfield>]\n");
-      exit(1);
-    }
-  }
 
   signal(SIGINT, sighandler);
 
@@ -623,73 +550,25 @@ int main(int argc, char **argv) {
   lwsl_notice("libwebsockets test server - license MIT\n");
   lwsl_notice("(C) Copyright 2010-2018 Andy Green <andy@warmcat.com>\n");
 
-  printf("Using resource path \"%s\"\n", resource_path);
-
-  info.iface = iface;
+  info.iface = NULL;
   info.protocols = protocols;
 
-#if defined(LWS_WITH_TLS)
-  info.ssl_cert_filepath = NULL;
-  info.ssl_private_key_filepath = NULL;
-
-  if (use_ssl) {
-    if (strlen(resource_path) > sizeof(cert_path) - 32) {
-      lwsl_err("resource path too long\n");
-      return -1;
-    }
-    if (!cert_path[0])
-      sprintf(cert_path, "%s/libwebsockets-test-server.pem", resource_path);
-    if (strlen(resource_path) > sizeof(key_path) - 32) {
-      lwsl_err("resource path too long\n");
-      return -1;
-    }
-    if (!key_path[0])
-      info.server_string = "hrouter/1.0";
-    sprintf(key_path, "%s/libwebsockets-test-server.key.pem", resource_path);
-#if defined(LWS_WITH_TLS)
-    info.ssl_cert_filepath = cert_path;
-    info.ssl_private_key_filepath = key_path;
-    if (ca_path[0])
-      info.ssl_ca_filepath = ca_path;
-#endif
-  }
-#endif
   info.gid = gid;
   info.uid = uid;
 
   info.server_string = "hrouter/1.0";
   // info.count_threads = 4;
 
-  info.options = opts | LWS_SERVER_OPTION_VALIDATE_UTF8 |
-                 LWS_SERVER_OPTION_EXPLICIT_VHOSTS;
-#if defined(LWS_ROLE_WS) && !defined(LWS_WITHOUT_EXTENSIONS)
-  info.extensions = exts;
-#endif
+  info.options =
+      LWS_SERVER_OPTION_VALIDATE_UTF8 | LWS_SERVER_OPTION_EXPLICIT_VHOSTS;
+
   info.timeout_secs = 5;
-#if defined(LWS_WITH_TLS)
-  info.ssl_cipher_list = "ECDHE-ECDSA-AES256-GCM-SHA384:"
-                         "ECDHE-RSA-AES256-GCM-SHA384:"
-                         "DHE-RSA-AES256-GCM-SHA384:"
-                         "ECDHE-RSA-AES256-SHA384:"
-                         "HIGH:!aNULL:!eNULL:!EXPORT:"
-                         "!DES:!MD5:!PSK:!RC4:!HMAC_SHA1:"
-                         "!SHA1:!DHE-RSA-AES128-GCM-SHA256:"
-                         "!DHE-RSA-AES128-SHA256:"
-                         "!AES128-GCM-SHA256:"
-                         "!AES128-SHA256:"
-                         "!DHE-RSA-AES256-SHA256:"
-                         "!AES256-GCM-SHA384:"
-                         "!AES256-SHA256";
-#endif
+
   info.mounts = &mount;
 #if defined(LWS_WITH_PEER_LIMITS)
   info.ip_limit_ah = 128;  /* for testing */
   info.ip_limit_wsi = 800; /* for testing */
 #endif
-
-  if (use_ssl)
-    /* redirect guys coming on http */
-    info.options |= LWS_SERVER_OPTION_REDIRECT_HTTP_TO_HTTPS;
 
   hrouter_server_system_init();
 
@@ -699,34 +578,11 @@ int main(int argc, char **argv) {
     return -1;
   }
 
-  // info.pvo = &pvo;
-#if 1
   vhost = lws_create_vhost(context, &info);
   if (!vhost) {
     lwsl_err("vhost creation failed\n");
     return -1;
   }
-#endif
-  /*
-   * For testing dynamic vhost create / destroy later, we use port + 1
-   * Normally if you were creating more vhosts, you would set info.name
-   * for each to be the hostname external clients use to reach it
-   */
-
-  // info.port++;
-
-#if defined(LWS_WITH_CLIENT) && defined(LWS_WITH_TLS)
-  // lws_init_vhost_client_ssl(&info, vhost);
-#endif
-
-  /* this shows how to override the lws file operations.	You don't need
-   * to do any of this unless you have a reason (eg, want to serve
-   * compressed files without decompressing the whole archive)
-   */
-  /* stash original platform fops */
-  // fops_plat = *(lws_get_fops(context));
-  /* override the active fops */
-  // lws_get_fops(context)->open = test_server_fops_open;
 
   n = 0;
   while (n >= 0 && !force_exit) {
@@ -734,24 +590,10 @@ int main(int argc, char **argv) {
 
     gettimeofday(&tv, NULL);
 
-    /*
-     * This provokes the LWS_CALLBACK_SERVER_WRITEABLE for every
-     * live websocket connection using the DUMB_INCREMENT protocol,
-     * as soon as it can take more packets (usually immediately)
-     */
-
-    /*
-     * If libwebsockets sockets are all we care about,
-     * you can use this api which takes care of the poll()
-     * and looping through finding who needed service.
-     */
-
     n = lws_service(context, 0);
   }
 
   lws_context_destroy(context);
-
-  lwsl_notice("libwebsockets-test-server exited cleanly\n");
 
   while ((ele = STAILQ_FIRST(&_hrouter_action_queue)) != NULL) {
     STAILQ_REMOVE_HEAD(&_hrouter_action_queue, next);
